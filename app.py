@@ -97,6 +97,23 @@ CREATE TABLE IF NOT EXISTS devoluciones (
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS equivalencias_base (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    producto_base TEXT,
+    referencia TEXT UNIQUE,
+    peso_kg REAL
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS parametros_bache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    producto_base TEXT UNIQUE,
+    tamaño_bache REAL
+)
+""")
+
 conn.commit()
 
 # ==================================================
@@ -183,7 +200,10 @@ menu = st.sidebar.selectbox("Menú",[
 "Órdenes por Fecha",
 "Reporte Producción",
 "Tablero Gerencial",
-"Devoluciones"
+"Devoluciones",
+"Análisis Despachos", 
+"Planeación vacio",
+"Planeación Producción"
 ])
 
 # ==================================================
@@ -1560,7 +1580,7 @@ if menu == "Devoluciones":
                 if decision == "Aprobado Reingreso":
                     st.info("Producto reingresado automáticamente al inventario.")
 
-            # ==================================================
+# ==================================================
 # DEVOLUCIONES
 # ==================================================
 
@@ -1606,3 +1626,454 @@ if menu == "Devoluciones":
             )
         else:
             st.warning("No hay devoluciones en ese rango de fechas.")
+
+# ==================================================
+# MODULO ANALISIS DE DESPACHOS
+# ==================================================
+
+if menu == "Análisis Despachos":
+
+    st.header("📊 ANALISIS DE PRODUCTO TERMINADO DESPACHADO")
+
+    from datetime import datetime
+    hoy = datetime.today()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        fecha_inicio = st.date_input("Desde", hoy.replace(day=1))
+
+    with col2:
+        fecha_fin = st.date_input("Hasta", hoy)
+
+    # =========================
+    # FILTRO BASE
+    # =========================
+
+    df = pd.read_sql(f"""
+        SELECT *
+        FROM salidas
+        WHERE fecha BETWEEN '{fecha_inicio}' AND '{fecha_fin}'
+    """, conn)
+
+    if df.empty:
+        st.warning("No hay despachos en el período seleccionado.")
+        st.stop()
+
+    # =========================
+    # KPI GENERALES
+    # =========================
+
+    st.subheader("📌 RESUMEN GENERAL")
+
+    total_und = df["cantidad"].sum()
+    total_facturas = df["factura"].nunique()
+    total_clientes = df["destino"].nunique()
+    total_lotes = df["lote"].nunique()
+
+    k1, k2, k3, k4 = st.columns(4)
+
+    k1.metric("Total UND Despachadas", f"{total_und:,.0f}")
+    k2.metric("Facturas", total_facturas)
+    k3.metric("Clientes", total_clientes)
+    k4.metric("Lotes", total_lotes)
+
+    st.divider()
+
+    # =========================
+    # DESPACHO POR CLIENTE
+    # =========================
+
+    st.subheader("👥 Despacho por Cliente")
+
+    por_cliente = df.groupby("destino")["cantidad"].sum().reset_index()
+    por_cliente = por_cliente.sort_values(by="cantidad", ascending=False)
+
+    st.dataframe(por_cliente)
+
+    st.divider()
+
+    # =========================
+    # DESPACHO POR FACTURA
+    # =========================
+
+    st.subheader("🧾 Despacho por Factura")
+
+    por_factura = df.groupby("factura")["cantidad"].sum().reset_index()
+    st.dataframe(por_factura.sort_values(by="cantidad", ascending=False))
+
+    st.divider()
+
+    # =========================
+    # DESPACHO POR LOTE
+    # =========================
+
+    st.subheader("🏷️ Despacho por Lote")
+
+    por_lote = df.groupby("lote")["cantidad"].sum().reset_index()
+    st.dataframe(por_lote.sort_values(by="cantidad", ascending=False))
+
+    st.divider()
+
+    # =========================
+    # DESPACHO POR PRODUCTO
+    # =========================
+
+    st.subheader("📦 Despacho por Producto")
+
+    por_producto = df.groupby("producto")["cantidad"].sum().reset_index()
+    st.dataframe(por_producto.sort_values(by="cantidad", ascending=False))
+
+    st.divider()
+
+    # =========================
+    # DESCARGAR REPORTE
+    # =========================
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Detalle", index=False)
+        por_cliente.to_excel(writer, sheet_name="Por_Cliente", index=False)
+        por_factura.to_excel(writer, sheet_name="Por_Factura", index=False)
+        por_lote.to_excel(writer, sheet_name="Por_Lote", index=False)
+        por_producto.to_excel(writer, sheet_name="Por_Producto", index=False)
+
+    st.download_button(
+        "📥 Descargar Reporte Completo en Excel",
+        data=output.getvalue(),
+        file_name="Reporte_Despachos.xlsx"
+    )
+
+# ==================================================
+# MODULO PLANEACION PRODUCTO TERMINADO
+# ==================================================
+
+if menu == "Planeación vacio":
+
+    st.header("📈 PLANEACIÓN DE PRODUCTO TERMINADO")
+
+    from datetime import datetime
+    hoy = datetime.today()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        fecha_inicio = st.date_input("Analizar desde", hoy.replace(day=1))
+
+    with col2:
+        fecha_fin = st.date_input("Hasta", hoy)
+
+    # =========================
+    # DEMANDA HISTORICA
+    # =========================
+
+    df_salidas = pd.read_sql(f"""
+        SELECT producto, SUM(cantidad) as total
+        FROM salidas
+        WHERE fecha BETWEEN '{fecha_inicio}' AND '{fecha_fin}'
+        GROUP BY producto
+    """, conn)
+
+    if df_salidas.empty:
+        st.warning("No hay datos de salidas en el período.")
+        st.stop()
+
+    dias_periodo = (fecha_fin - fecha_inicio).days + 1
+    df_salidas["demanda_diaria"] = df_salidas["total"] / dias_periodo
+
+    # =========================
+    # INVENTARIO ACTUAL
+    # =========================
+
+    inventario = pd.read_sql("""
+        SELECT e.producto,
+        SUM(e.cantidad) -
+        IFNULL((SELECT SUM(s.cantidad)
+                FROM salidas s
+                WHERE s.producto=e.producto
+                AND s.lote=e.lote),0) as stock
+        FROM entradas e
+        GROUP BY e.producto, e.lote
+        HAVING stock > 0
+    """, conn)
+
+    inventario_total = inventario.groupby("producto")["stock"].sum().reset_index()
+
+    # =========================
+    # UNIR DEMANDA + INVENTARIO
+    # =========================
+
+    df_planeacion = df_salidas.merge(inventario_total, on="producto", how="left")
+    df_planeacion["stock"] = df_planeacion["stock"].fillna(0)
+
+    # =========================
+    # PARAMETROS
+    # =========================
+
+    st.subheader("⚙️ Parámetros de Planeación")
+
+    dias_reposicion = st.number_input("Días de reposición", value=7)
+    stock_seguridad = st.number_input("Stock de seguridad (UND)", value=100)
+
+    # =========================
+    # CALCULOS
+    # =========================
+
+    df_planeacion["punto_reposicion"] = (
+        df_planeacion["demanda_diaria"] * dias_reposicion
+        + stock_seguridad
+    )
+
+    df_planeacion["dias_cobertura"] = (
+        df_planeacion["stock"] / df_planeacion["demanda_diaria"]
+    )
+
+    df_planeacion["produccion_sugerida"] = (
+        df_planeacion["punto_reposicion"] - df_planeacion["stock"]
+    )
+
+    df_planeacion["produccion_sugerida"] = df_planeacion["produccion_sugerida"].apply(
+        lambda x: x if x > 0 else 0
+    )
+
+    # =========================
+    # MOSTRAR RESULTADO
+    # =========================
+
+    st.subheader("📊 Resultado Planeación")
+
+    st.dataframe(
+        df_planeacion[
+            [
+                "producto",
+                "total",
+                "demanda_diaria",
+                "stock",
+                "dias_cobertura",
+                "punto_reposicion",
+                "produccion_sugerida",
+            ]
+        ].sort_values(by="produccion_sugerida", ascending=False)
+    )
+
+    # =========================
+    # ALERTAS
+    # =========================
+
+    st.subheader("🚨 Productos en Riesgo")
+
+    riesgo = df_planeacion[df_planeacion["dias_cobertura"] < dias_reposicion]
+
+    if not riesgo.empty:
+        st.warning("Estos productos deben producirse:")
+        st.dataframe(riesgo[["producto","produccion_sugerida"]])
+    else:
+        st.success("No hay productos críticos.")
+
+    # =========================
+    # DESCARGAR REPORTE
+    # =========================
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_planeacion.to_excel(writer, index=False)
+
+    st.download_button(
+        "📥 Descargar Planeación en Excel",
+        data=output.getvalue(),
+        file_name="Planeacion_Producto_Terminado.xlsx"
+    )
+
+# ==================================================
+# 📦 PLANEACIÓN PRODUCCIÓN AUTOMÁTICA
+# ==================================================
+
+if menu == "Planeación Producción":
+
+    st.header("🏭 Planeación Producción Automática")
+
+    from datetime import datetime
+    import math
+
+    hoy = datetime.today()
+
+    # ==================================================
+    # 1️⃣ FILTRO DE FECHAS (DEMANDA HISTÓRICA)
+    # ==================================================
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        fecha_inicio = st.date_input("Analizar desde", hoy.replace(day=1))
+
+    with col2:
+        fecha_fin = st.date_input("Hasta", hoy)
+
+    # ==================================================
+    # 2️⃣ TRAER SALIDAS
+    # ==================================================
+
+    df_salidas = pd.read_sql(f"""
+        SELECT producto, SUM(cantidad) as total_und
+        FROM salidas
+        WHERE fecha BETWEEN '{fecha_inicio}' AND '{fecha_fin}'
+        GROUP BY producto
+    """, conn)
+
+    if df_salidas.empty:
+        st.warning("No hay despachos en el período seleccionado.")
+        st.stop()
+
+    # ==================================================
+    # 3️⃣ TRAER EQUIVALENCIAS
+    # ==================================================
+
+    df_equiv = pd.read_sql("SELECT * FROM equivalencias_base", conn)
+
+    if df_equiv.empty:
+        st.error("Debe cargar primero la tabla equivalencias_base.")
+        st.stop()
+
+    # ==================================================
+    # 4️⃣ CONVERTIR A KG BASE
+    # ==================================================
+
+    df_merge = df_salidas.merge(
+        df_equiv,
+        left_on="producto",
+        right_on="referencia",
+        how="left"
+    )
+
+    df_merge["peso_kg"] = df_merge["peso_kg"].fillna(0)
+    df_merge["kg_base"] = df_merge["total_und"] * df_merge["peso_kg"]
+
+    df_planeacion = df_merge.groupby("producto_base")["kg_base"].sum().reset_index()
+
+    # ==================================================
+    # 5️⃣ PARÁMETROS DE PROYECCIÓN
+    # ==================================================
+
+    st.divider()
+    st.subheader("⚙ Parámetros de Planeación")
+
+    crecimiento = st.number_input("Proyección crecimiento (%)", value=0.0)
+    stock_seguridad = st.number_input("Stock de seguridad (kg)", value=0.0)
+
+    df_planeacion["kg_proyectado"] = df_planeacion["kg_base"] * (1 + crecimiento/100)
+    df_planeacion["kg_total"] = df_planeacion["kg_proyectado"] + stock_seguridad
+
+    # ==================================================
+    # 6️⃣ TRAER TAMAÑO DE BACHE
+    # ==================================================
+
+    df_param = pd.read_sql("SELECT * FROM parametros_bache", conn)
+
+    if df_param.empty:
+        st.error("Debe cargar primero la tabla parametros_bache.")
+        st.stop()
+
+    df_planeacion = df_planeacion.merge(
+        df_param,
+        on="producto_base",
+        how="left"
+    )
+
+    df_planeacion["tamaño_bache"] = df_planeacion["tamaño_bache"].fillna(0)
+
+    # Calcular baches
+    df_planeacion["baches_sugeridos"] = df_planeacion.apply(
+        lambda row: math.ceil(row["kg_total"] / row["tamaño_bache"])
+        if row["tamaño_bache"] > 0 else 0,
+        axis=1
+    )
+
+    st.divider()
+    st.subheader("📊 Planeación Base Calculada")
+    st.dataframe(df_planeacion)
+
+    # ==================================================
+    # 7️⃣ 📅 PLAN SEMANAL (LUNES A VIERNES)
+    # ==================================================
+
+    st.divider()
+    st.subheader("📅 Plan Semanal Automático en KG")
+
+    dias_produccion = ["Lunes","Martes","Miércoles","Jueves","Viernes"]
+    dias_completo = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"]
+
+    capacidad_dia_total = st.number_input(
+        "Capacidad total planta por día (kg)",
+        value=3000.0
+    )
+
+    planeacion = []
+
+    for _, row in df_planeacion.iterrows():
+
+        producto = row["producto_base"]
+        total_kg = float(row["kg_total"])
+
+        distribucion = {dia: 0 for dia in dias_completo}
+
+        if total_kg > 0:
+            kg_diario = total_kg / 5
+
+            for dia in dias_produccion:
+                distribucion[dia] = kg_diario
+
+        fila = {"Producto Base": producto}
+        fila.update(distribucion)
+
+        planeacion.append(fila)
+
+    df_semana = pd.DataFrame(planeacion)
+
+    # ==================================================
+    # 8️⃣ CARGA TOTAL DIARIA
+    # ==================================================
+
+    totales_dia = df_semana[dias_completo].sum().reset_index()
+    totales_dia.columns = ["Día", "Total KG"]
+
+    # ==================================================
+    # 🎨 ESTILO VISUAL TIPO SAP
+    # ==================================================
+
+    def color_celda(val):
+        if val == 0:
+            return "background-color: #2b2b2b; color: #999;"
+        elif val < capacidad_dia_total * 0.4:
+            return "background-color: #1f6f4a; color: white;"
+        elif val < capacidad_dia_total * 0.7:
+            return "background-color: #1565c0; color: white;"
+        else:
+            return "background-color: #d84315; color: white;"
+
+    styled = df_semana.style.applymap(
+        color_celda,
+        subset=dias_completo
+    ).format("{:.1f}", subset=dias_completo)
+
+    st.dataframe(styled, use_container_width=True)
+
+    st.divider()
+    st.subheader("📊 Carga Total Diaria Planta (kg)")
+    st.dataframe(totales_dia)
+
+    # ==================================================
+    # 9️⃣ DESCARGAR REPORTE COMPLETO
+    # ==================================================
+
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_planeacion.to_excel(writer, sheet_name="Planeacion_Base", index=False)
+        df_semana.to_excel(writer, sheet_name="Plan_Semanal_KG", index=False)
+        totales_dia.to_excel(writer, sheet_name="Totales_Diarios", index=False)
+
+    st.download_button(
+        "📥 Descargar Planeación Completa en Excel",
+        data=output.getvalue(),
+        file_name="Planeacion_Produccion_Automatica.xlsx"
+    )
