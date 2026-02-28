@@ -114,6 +114,20 @@ CREATE TABLE IF NOT EXISTS parametros_bache (
 )
 """)
 
+# ==================================================
+# TABLA USUARIOS
+# ==================================================
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario TEXT UNIQUE,
+    contraseña TEXT,
+    rol TEXT,
+    modulos TEXT
+)
+""")
+
 conn.commit()
 
 # ==================================================
@@ -190,21 +204,85 @@ for codigo, producto in productos_lista:
 
 conn.commit()
 
-menu = st.sidebar.selectbox("Menú",[
-"Entrada",
-"Salida",
-"Dashboard",
-"Trazabilidad",
-"Producción",
-"Orden Producción PDF",
-"Órdenes por Fecha",
-"Reporte Producción",
-"Tablero Gerencial",
-"Devoluciones",
-"Análisis Despachos", 
-"Planeación vacio",
-"Planeación Producción"
-])
+MODULOS_SISTEMA = [
+    "Entrada",
+    "Salida",
+    "Dashboard",
+    "Trazabilidad",
+    "Producción",
+    "Planeación Producción",
+    "Planeación vacío",
+    "Orden Producción PDF",
+    "Ordenes por Fecha",
+    "Reporte Producción",
+    "Devoluciones",
+    "Análisis Despachos",
+    "Tablero Gerencial",
+    "Administración Usuarios"
+]
+
+# ==================================================
+# LOGIN
+# ==================================================
+
+if "usuario_activo" not in st.session_state:
+    st.session_state.usuario_activo = None
+    st.session_state.rol_activo = None
+    st.session_state.modulos_activos = []
+
+if st.session_state.usuario_activo is None:
+
+    st.title("🔐 Login Sistema DANISAN")
+
+    usuario = st.text_input("Usuario")
+    contraseña = st.text_input("Contraseña", type="password")
+
+    if st.button("Ingresar"):
+
+        user = cursor.execute(
+            "SELECT * FROM usuarios WHERE usuario=? AND contraseña=?",
+            (usuario, contraseña)
+        ).fetchone()
+
+        if user:
+            st.session_state.usuario_activo = user[1]
+            st.session_state.rol_activo = user[3]
+            st.session_state.modulos_activos = user[4].split("|")
+            st.success("Ingreso correcto")
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos")
+
+    st.stop()
+
+ # ==================================================
+# HEADER USUARIO ACTIVO
+# ==================================================
+
+if st.session_state.usuario_activo:
+
+    col1, col2 = st.columns([6,1])
+
+    with col1:
+        st.write(f"👤 Usuario: {st.session_state.usuario_activo} | Rol: {st.session_state.rol_activo}")
+
+    with col2:
+        if st.button("Cerrar sesión"):
+            st.session_state.usuario_activo = None
+            st.session_state.rol_activo = None
+            st.session_state.modulos_activos = []
+            st.rerun()
+
+# ==================================================
+# MENÚ SEGÚN PERMISOS
+# ==================================================
+
+st.sidebar.title("Menú")
+
+menu = st.sidebar.selectbox(
+    "Seleccione módulo",
+    st.session_state.modulos_activos
+)
 
 # ==================================================
 # ENTRADA
@@ -961,7 +1039,7 @@ if menu == "Orden Producción PDF":
 # ÓRDENES DE PRODUCCIÓN POR FECHA (PDF CONSOLIDADO)
 # ==================================================
 
-if menu == "Órdenes por Fecha":
+if menu == "Ordenes por Fecha":
 
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
     from reportlab.lib import colors
@@ -1885,60 +1963,82 @@ if menu == "Planeación vacio":
     )
 
 # ==================================================
-# 📦 PLANEACIÓN PRODUCCIÓN AUTOMÁTICA
+# 🧠 PLANEACIÓN PRODUCCIÓN INTELIGENTE (MRP)
 # ==================================================
 
 if menu == "Planeación Producción":
 
-    st.header("🏭 Planeación Producción Automática")
+    st.header("🧠 Planeación Producción Inteligente")
 
-    from datetime import datetime
+    from datetime import datetime, timedelta
     import math
 
     hoy = datetime.today()
 
     # ==================================================
-    # 1️⃣ FILTRO DE FECHAS (DEMANDA HISTÓRICA)
+    # 1️⃣ PERÍODOS AUTOMÁTICOS
     # ==================================================
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        fecha_inicio = st.date_input("Analizar desde", hoy.replace(day=1))
-
-    with col2:
-        fecha_fin = st.date_input("Hasta", hoy)
+    fecha_fin = hoy
+    fecha_inicio = hoy - timedelta(days=30)
+    fecha_inicio_anterior = fecha_inicio - timedelta(days=30)
 
     # ==================================================
-    # 2️⃣ TRAER SALIDAS
+    # 2️⃣ DEMANDA ÚLTIMOS 30 DÍAS
     # ==================================================
 
-    df_salidas = pd.read_sql(f"""
+    df_actual = pd.read_sql(f"""
         SELECT producto, SUM(cantidad) as total_und
         FROM salidas
-        WHERE fecha BETWEEN '{fecha_inicio}' AND '{fecha_fin}'
+        WHERE fecha BETWEEN '{fecha_inicio.date()}' AND '{fecha_fin.date()}'
         GROUP BY producto
     """, conn)
 
-    if df_salidas.empty:
-        st.warning("No hay despachos en el período seleccionado.")
+    df_anterior = pd.read_sql(f"""
+        SELECT producto, SUM(cantidad) as total_und
+        FROM salidas
+        WHERE fecha BETWEEN '{fecha_inicio_anterior.date()}' AND '{fecha_inicio.date()}'
+        GROUP BY producto
+    """, conn)
+
+    if df_actual.empty:
+        st.warning("No hay datos suficientes para análisis.")
         st.stop()
 
     # ==================================================
-    # 3️⃣ TRAER EQUIVALENCIAS
+    # 3️⃣ CALCULAR VARIACIÓN REAL
     # ==================================================
 
-    df_equiv = pd.read_sql("SELECT * FROM equivalencias_base", conn)
+    df_tendencia = df_actual.merge(
+        df_anterior,
+        on="producto",
+        how="left",
+        suffixes=("_actual","_anterior")
+    )
 
-    if df_equiv.empty:
-        st.error("Debe cargar primero la tabla equivalencias_base.")
-        st.stop()
+    df_tendencia["total_und_anterior"] = df_tendencia["total_und_anterior"].fillna(0)
+
+    df_tendencia["variacion_%"] = df_tendencia.apply(
+        lambda row: (
+            ((row["total_und_actual"] - row["total_und_anterior"]) 
+             / row["total_und_anterior"]) * 100
+            if row["total_und_anterior"] > 0 else 0
+        ),
+        axis=1
+    )
+
+    crecimiento_promedio = df_tendencia["variacion_%"].mean()
+
+    st.subheader("📈 Tendencia Detectada")
+    st.write(f"Variación promedio demanda: **{round(crecimiento_promedio,2)} %**")
 
     # ==================================================
     # 4️⃣ CONVERTIR A KG BASE
     # ==================================================
 
-    df_merge = df_salidas.merge(
+    df_equiv = pd.read_sql("SELECT * FROM equivalencias_base", conn)
+
+    df_merge = df_actual.merge(
         df_equiv,
         left_on="producto",
         right_on="referencia",
@@ -1951,27 +2051,19 @@ if menu == "Planeación Producción":
     df_planeacion = df_merge.groupby("producto_base")["kg_base"].sum().reset_index()
 
     # ==================================================
-    # 5️⃣ PARÁMETROS DE PROYECCIÓN
+    # 5️⃣ PROYECCIÓN AUTOMÁTICA
     # ==================================================
 
-    st.divider()
-    st.subheader("⚙ Parámetros de Planeación")
-
-    crecimiento = st.number_input("Proyección crecimiento (%)", value=0.0)
     stock_seguridad = st.number_input("Stock de seguridad (kg)", value=0.0)
 
-    df_planeacion["kg_proyectado"] = df_planeacion["kg_base"] * (1 + crecimiento/100)
+    df_planeacion["kg_proyectado"] = df_planeacion["kg_base"] * (1 + crecimiento_promedio/100)
     df_planeacion["kg_total"] = df_planeacion["kg_proyectado"] + stock_seguridad
 
     # ==================================================
-    # 6️⃣ TRAER TAMAÑO DE BACHE
+    # 6️⃣ TAMAÑO DE BACHE
     # ==================================================
 
     df_param = pd.read_sql("SELECT * FROM parametros_bache", conn)
-
-    if df_param.empty:
-        st.error("Debe cargar primero la tabla parametros_bache.")
-        st.stop()
 
     df_planeacion = df_planeacion.merge(
         df_param,
@@ -1979,9 +2071,6 @@ if menu == "Planeación Producción":
         how="left"
     )
 
-    df_planeacion["tamaño_bache"] = df_planeacion["tamaño_bache"].fillna(0)
-
-    # Calcular baches
     df_planeacion["baches_sugeridos"] = df_planeacion.apply(
         lambda row: math.ceil(row["kg_total"] / row["tamaño_bache"])
         if row["tamaño_bache"] > 0 else 0,
@@ -1989,91 +2078,162 @@ if menu == "Planeación Producción":
     )
 
     st.divider()
-    st.subheader("📊 Planeación Base Calculada")
+    st.subheader("📊 Planeación Inteligente")
     st.dataframe(df_planeacion)
 
     # ==================================================
-    # 7️⃣ 📅 PLAN SEMANAL (LUNES A VIERNES)
+    # 7️⃣ PLAN SEMANAL LUNES A VIERNES
     # ==================================================
 
     st.divider()
-    st.subheader("📅 Plan Semanal Automático en KG")
+    st.subheader("📅 Plan Semanal (Sábado Aseo General)")
 
     dias_produccion = ["Lunes","Martes","Miércoles","Jueves","Viernes"]
     dias_completo = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"]
-
-    capacidad_dia_total = st.number_input(
-        "Capacidad total planta por día (kg)",
-        value=3000.0
-    )
 
     planeacion = []
 
     for _, row in df_planeacion.iterrows():
 
-        producto = row["producto_base"]
         total_kg = float(row["kg_total"])
-
         distribucion = {dia: 0 for dia in dias_completo}
 
         if total_kg > 0:
             kg_diario = total_kg / 5
-
             for dia in dias_produccion:
                 distribucion[dia] = kg_diario
 
-        fila = {"Producto Base": producto}
+        fila = {"Producto Base": row["producto_base"]}
         fila.update(distribucion)
-
         planeacion.append(fila)
 
     df_semana = pd.DataFrame(planeacion)
 
-    # ==================================================
-    # 8️⃣ CARGA TOTAL DIARIA
-    # ==================================================
-
-    totales_dia = df_semana[dias_completo].sum().reset_index()
-    totales_dia.columns = ["Día", "Total KG"]
+    st.dataframe(df_semana, use_container_width=True)
 
     # ==================================================
-    # 🎨 ESTILO VISUAL TIPO SAP
+    # 8️⃣ KPI GERENCIAL
     # ==================================================
-
-    def color_celda(val):
-        if val == 0:
-            return "background-color: #2b2b2b; color: #999;"
-        elif val < capacidad_dia_total * 0.4:
-            return "background-color: #1f6f4a; color: white;"
-        elif val < capacidad_dia_total * 0.7:
-            return "background-color: #1565c0; color: white;"
-        else:
-            return "background-color: #d84315; color: white;"
-
-    styled = df_semana.style.applymap(
-        color_celda,
-        subset=dias_completo
-    ).format("{:.1f}", subset=dias_completo)
-
-    st.dataframe(styled, use_container_width=True)
 
     st.divider()
-    st.subheader("📊 Carga Total Diaria Planta (kg)")
-    st.dataframe(totales_dia)
+    st.subheader("📊 KPI Gerencial")
 
-    # ==================================================
-    # 9️⃣ DESCARGAR REPORTE COMPLETO
-    # ==================================================
+    total_kg_mes = df_planeacion["kg_total"].sum()
+    total_baches = df_planeacion["baches_sugeridos"].sum()
 
-    output = io.BytesIO()
+    col1, col2 = st.columns(2)
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_planeacion.to_excel(writer, sheet_name="Planeacion_Base", index=False)
-        df_semana.to_excel(writer, sheet_name="Plan_Semanal_KG", index=False)
-        totales_dia.to_excel(writer, sheet_name="Totales_Diarios", index=False)
+    with col1:
+        st.metric("Total KG Proyectados Mes", round(total_kg_mes,2))
 
-    st.download_button(
-        "📥 Descargar Planeación Completa en Excel",
-        data=output.getvalue(),
-        file_name="Planeacion_Produccion_Automatica.xlsx"
+    with col2:
+        st.metric("Total Baches Sugeridos", int(total_baches))
+
+# ==================================================
+# CREAR ADMINISTRADOR PRINCIPAL
+# ==================================================
+
+admin_modulos = "|".join([
+    "Entrada","Salida","Dashboard","Trazabilidad",
+    "Producción","Planeación Producción","Planeación vacío",
+    "Orden Producción PDF","Órdenes por Fecha",
+    "Reporte Producción","Devoluciones",
+    "Análisis Despachos","Tablero Gerencial",
+    "Administración Usuarios"
+])
+
+cursor.execute("""
+INSERT OR IGNORE INTO usuarios (usuario,contraseña,rol,modulos)
+VALUES (?,?,?,?)
+""", ("admin","admin123","Administrador",admin_modulos))
+
+conn.commit()
+
+# ==================================================
+# 👑 ADMINISTRACIÓN DE USUARIOS
+# ==================================================
+
+if menu == "Administración Usuarios":
+
+    st.header("👑 Administración de Usuarios")
+
+    # ----------------------------------------------
+    # CREAR USUARIO
+    # ----------------------------------------------
+
+    st.subheader("➕ Crear Nuevo Usuario")
+
+    with st.form("form_crear_usuario", clear_on_submit=True):
+
+        nuevo_usuario = st.text_input("Usuario")
+        nueva_contraseña = st.text_input("Contraseña", type="password")
+
+        rol_nuevo = st.selectbox(
+            "Rol",
+            ["Producción","Logistica","Calidad","Gerencia"]
+        )
+
+        modulos_asignados = st.multiselect(
+            "Asignar Módulos",
+            MODULOS_SISTEMA
+        )
+
+        crear = st.form_submit_button("Crear Usuario")
+
+        if crear:
+
+            if not nuevo_usuario or not nueva_contraseña:
+                st.error("Complete todos los campos")
+            elif not modulos_asignados:
+                st.error("Debe asignar al menos un módulo")
+            else:
+                modulos_str = "|".join(modulos_asignados)
+
+                try:
+                    cursor.execute("""
+                        INSERT INTO usuarios (usuario,contraseña,rol,modulos)
+                        VALUES (?,?,?,?)
+                    """,(nuevo_usuario,nueva_contraseña,rol_nuevo,modulos_str))
+                    conn.commit()
+                    st.success("Usuario creado correctamente")
+                except:
+                    st.error("Ese usuario ya existe")
+
+    st.divider()
+
+    # ----------------------------------------------
+    # LISTADO
+    # ----------------------------------------------
+
+    st.subheader("📋 Usuarios Registrados")
+
+    df_users = pd.read_sql(
+        "SELECT id,usuario,rol FROM usuarios",
+        conn
     )
+
+    st.dataframe(df_users, use_container_width=True)
+
+    st.divider()
+
+    # ----------------------------------------------
+    # ELIMINAR USUARIO
+    # ----------------------------------------------
+
+    usuario_eliminar = st.selectbox(
+        "Seleccionar Usuario a Eliminar",
+        df_users["usuario"].tolist()
+    )
+
+    if st.button("Eliminar Usuario"):
+
+        if usuario_eliminar == "admin":
+            st.error("No se puede eliminar el administrador principal")
+        else:
+            cursor.execute(
+                "DELETE FROM usuarios WHERE usuario=?",
+                (usuario_eliminar,)
+            )
+            conn.commit()
+            st.success("Usuario eliminado correctamente")
+            st.rerun()
