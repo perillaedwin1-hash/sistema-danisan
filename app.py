@@ -47,6 +47,12 @@ cursor = conn.cursor()
 # CREAR TABLAS
 # ==================================================
 
+try:
+    cursor.execute("ALTER TABLE productos ADD COLUMN activo INTEGER DEFAULT 1")
+    conn.commit()
+except:
+    pass
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS productos (
     codigo TEXT PRIMARY KEY,
@@ -135,6 +141,23 @@ conn.commit()
 # ==================================================
 
 productos_lista = [
+("HAM-002","HAMBURGUESA X 5 X 575GR"),
+("HAM-004","HAMBURGUESA X 10 X 115GR"),
+("HAM-005","HAMBURGUESA X 10 UND REDONDA"),
+("HAM-007","HAMBURGUESA LLANERA 90GR X 10"),
+("HAM-003","HAMBURGUESA X 30 CUADRADA"),
+("HAM-001","HAMBURGUESA X 30 REDONDA"),
+("HAM-013","HAMBURGUESA REDONDA EL LLANERO 115 GR X 30"),
+("HAM-015","HAMBURGUESA REDONDA EL LLANERO 85 GR X 30"),
+("HAM-006","HAMBURGUESA X 30*95 GR CARCEL"),
+("HAM-016","HAMBURGUESA GRANEL X 85 GR LLANERA"),
+("HAM-017","HAMBURGUESA GRANEL X 115 GR LLANERA"),
+("HAM-018","HAMBURGUESA GRANEL X 90 GR LLANERA"),
+("HAM-019","HAMBURGUESA GRANEL X 100 GR REDONDA"),
+("HAM-020","HAMBURGUESA GRANEL X 115 GR CUADRADA"),
+("HAM-021","HAMBURGUESA GRANEL X 115 GR REDONDA"),
+("HAM-001","HAMBURGUESA X 30 REDONDA"),
+("HAM-003","HAMBURGUESA X 30 CUADRADA"),
 ("ALA-001","ALA AHUMADA X 250G"),
 ("ALA-002","ALA AHUMADA X 350G"),
 ("ALA-003","ALA AHUMADA X 500G"),
@@ -174,6 +197,7 @@ productos_lista = [
 ("CH-610","CHORIZO SANTAROSITA X 8"),
 ("CH-606","CHORIZO SANTA ROSANO X 20"),
 ("CH-608","CHORIZO SANTA ROSANO LLANERO X 12"),
+("CH-609","CHORIZO SANTA ROSANO LLANERO X 50"),
 ("CH-700","CHORICHUZO X 450 GR"),
 ("CH-707","CHORIZO RANCHERO FINO X 12"),
 ("COS-001","COSTILLA AHUMADA X 250GRS"),
@@ -205,21 +229,6 @@ productos_lista = [
 ("COS-017","COSTILLA AHUMADA TROZO X 400 GR"),
 ("COS-018","COSTILLA AHUMADA TROZO X 500 GR"),
 ("COS-019","COSTILLA AHUMADA TROZO X 300 GR"),
-("HAM-002","HAMBURGUESA X 5 (575 GR)"),
-("HAM-004","HAMBURGUESA X 10 (115 GR)"),
-("HAM-005","HAMBURGUESA X 10 UND REDONDA"),
-("HAM-007","HAMBURGUESA LLANERA 90 GR X 10"),
-("HAM-003","HAMBURGUESA X 30 (CUADRADA)"),
-("HAM-001","HAMBURGUESA X 30 (REDONDA)"),
-("HAM-013","HAMBURGUESA REDONDA EL LLANERO 115 GR X 30"),
-("HAM-015","HAMBURGUESA REDONDA EL LLANERO 85 GR X 30"),
-("HAM-006","HAMBURGUESA X 30*95 GR (CARCEL)"),
-("HAM-016","HAMBURGUESA GRANEL X 85 GR LLANERA"),
-("HAM-017","HAMBURGUESA GRANEL X 115 GR LLANERA"),
-("HAM-018","HAMBURGUESA GRANEL X 90 GR LLANERA"),
-("HAM-019","HAMBURGUESA GRANEL X 100 GR REDONDA"),
-("HAM-020","HAMBURGUESA GRANEL X 115 GR CUADRADA"),
-("HAM-021","HAMBURGUESA GRANEL X 115 GR REDONDA"),
 ("JAM-001","JAMÓN X 500 GR"),
 ("JAM-002","JAMON RECORTE"),
 ("JAM-003","JAMÓN X 250 GR"),
@@ -258,11 +267,14 @@ productos_lista = [
 ("TOC-013","TOCINETA LLANERA X 1000 GR"),
 ("TOC-006","TOCINETA RECORTE X 500 GR"),
 ("TOC-005","TOCINETA RECORTE X 1000 GR"),
-("TOC-003","TOCINETA X 500 g JAMONERIA SUIZA"),
+("TOC-003","TOCINETA X 500 g JAMONERIA SUIZA")
 ]
 
 for codigo, producto in productos_lista:
-    cursor.execute("INSERT OR IGNORE INTO productos VALUES (?,?)",(codigo,producto))
+    cursor.execute("""
+    INSERT OR IGNORE INTO productos (codigo,producto,activo)
+    VALUES (?,?,1)
+""",(codigo,producto))
 
 conn.commit()
 
@@ -280,7 +292,8 @@ MODULOS_SISTEMA = [
     "Devoluciones",
     "Análisis Despachos",
     "Tablero Gerencial",
-    "Administración Usuarios"
+    "Administración Usuarios",
+    "Gestión Movimientos"
 ]
 
 # ==================================================
@@ -360,8 +373,11 @@ if menu == "Entrada":
         fecha = st.date_input("Fecha", value=date.today())
         area = st.text_input("Área")
 
-        productos = pd.read_sql("SELECT producto FROM productos ORDER BY producto",conn)
-        producto = st.selectbox("Producto", productos["producto"])
+        productos = pd.read_sql(
+    "SELECT producto FROM productos WHERE activo=1 ORDER BY producto",
+    conn
+)
+        producto = st.selectbox("Producto", productos ["producto"])
 
         lote = st.text_input("Lote")
         cantidad = st.number_input("Cantidad", min_value=0.0)
@@ -2232,7 +2248,7 @@ if menu == "Administración Usuarios":
 
         rol_nuevo = st.selectbox(
             "Rol",
-            ["Producción","Logistica","Calidad","Gerencia"]
+            ["Producción","Logistica","Calidad","Gerencia","Auditoria"]
         )
 
         modulos_asignados = st.multiselect(
@@ -2299,3 +2315,193 @@ if menu == "Administración Usuarios":
             conn.commit()
             st.success("Usuario eliminado correctamente")
             st.rerun()
+
+# ==================================================
+# 🛠 GESTIÓN DE MOVIMIENTOS
+# ==================================================
+
+if menu == "Gestión Movimientos":
+
+    st.header("🛠 Gestión de Movimientos")
+
+    tipo = st.selectbox(
+        "Seleccionar Tipo de Movimiento",
+        ["Entradas", "Salidas", "Devoluciones", "Producciones"]
+    )
+
+    tabla_map = {
+        "Entradas": "entradas",
+        "Salidas": "salidas",
+        "Devoluciones": "devoluciones",
+        "Producciones": "producciones"
+    }
+
+    tabla = tabla_map[tipo]
+
+    df = pd.read_sql(f"SELECT * FROM {tabla} ORDER BY id DESC", conn)
+
+    if df.empty:
+        st.warning("No hay registros.")
+        st.stop()
+
+    st.dataframe(df, use_container_width=True)
+
+    st.divider()
+
+    id_seleccionado = st.selectbox(
+        "Seleccionar ID para Modificar o Eliminar",
+        df["id"].tolist()
+    )
+
+    registro = df[df["id"] == id_seleccionado].iloc[0]
+
+    st.subheader("✏ Editar Registro")
+
+    columnas = df.columns.tolist()
+    columnas.remove("id")
+
+    valores_editados = {}
+
+    for col in columnas:
+        valores_editados[col] = st.text_input(
+            f"{col}",
+            value=str(registro[col])
+        )
+
+    col1, col2 = st.columns(2)
+
+    # ----------------------------------------------
+    # ACTUALIZAR
+    # ----------------------------------------------
+
+    with col1:
+        if st.button("Actualizar Registro"):
+
+            campos = ", ".join([f"{col}=?" for col in columnas])
+            valores = list(valores_editados.values())
+            valores.append(id_seleccionado)
+
+            cursor.execute(
+                f"UPDATE {tabla} SET {campos} WHERE id=?",
+                valores
+            )
+
+            conn.commit()
+            st.success("Registro actualizado correctamente")
+            st.rerun()
+
+    # ----------------------------------------------
+    # ELIMINAR
+    # ----------------------------------------------
+
+    with col2:
+        if st.button("🗑 Eliminar Registro"):
+
+            cursor.execute(
+                f"DELETE FROM {tabla} WHERE id=?",
+                (id_seleccionado,)
+            )
+
+            conn.commit()
+            st.success("Registro eliminado correctamente")
+            st.rerun()
+
+
+    st.subheader("➕ Agregar Nuevo Producto")
+
+    with st.form("form_producto", clear_on_submit=True):
+
+        codigo = st.text_input("Código")
+        nombre = st.text_input("Nombre Producto")
+
+        agregar = st.form_submit_button("Agregar Producto")
+
+        if agregar:
+
+            try:
+                cursor.execute("""
+                    INSERT INTO productos (codigo,producto,activo)
+                    VALUES (?,?,1)
+                """,(codigo,nombre))
+                conn.commit()
+                st.success("Producto agregado correctamente")
+            except:
+                st.error("Código o producto ya existe")
+
+    st.divider()
+
+    # ==========================================
+    # LISTADO PRODUCTOS
+    # ==========================================
+
+    df_prod = pd.read_sql(
+        "SELECT * FROM productos ORDER BY producto",
+        conn
+    )
+
+    st.dataframe(df_prod, use_container_width=True)
+
+    st.divider()
+
+    # ==========================================
+    # EDITAR PRODUCTO
+    # ==========================================
+
+    st.subheader("✏ Editar Producto")
+
+    id_select = st.selectbox(
+        "Seleccionar Producto",
+        df_prod["codigo"]
+    )
+
+    producto_sel = df_prod[df_prod["codigo"] == id_select].iloc[0]
+
+    nuevo_nombre = st.text_input(
+        "Nuevo Nombre",
+        value=producto_sel["producto"]
+    )
+
+    nuevo_estado = st.selectbox(
+        "Estado",
+        ["Activo","Inactivo"],
+        index=0 if producto_sel["activo"] == 1 else 1
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Actualizar Producto"):
+
+            estado_valor = 1 if nuevo_estado == "Activo" else 0
+
+            cursor.execute("""
+                UPDATE productos
+                SET producto=?, activo=?
+                WHERE codigo=?
+            """,(nuevo_nombre,estado_valor,id_select))
+
+            conn.commit()
+            st.success("Producto actualizado correctamente")
+            st.rerun()
+
+    # ==========================================
+    # ELIMINAR SOLO SI NO TIENE MOVIMIENTOS
+    # ==========================================
+
+    with col2:
+        if st.button("🗑 Eliminar Producto"):
+
+            movimientos = cursor.execute("""
+                SELECT COUNT(*) FROM entradas WHERE producto=?
+            """,(producto_sel["producto"],)).fetchone()[0]
+
+            if movimientos > 0:
+                st.error("No se puede eliminar. Tiene movimientos registrados.")
+            else:
+                cursor.execute(
+                    "DELETE FROM productos WHERE codigo=?",
+                    (id_select,)
+                )
+                conn.commit()
+                st.success("Producto eliminado")
+                st.rerun()
