@@ -293,7 +293,8 @@ MODULOS_SISTEMA = [
     "Análisis Despachos",
     "Tablero Gerencial",
     "Administración Usuarios",
-    "Gestión Movimientos"
+    "Gestión Movimientos",
+    "Control Lote"
 ]
 
 # ==================================================
@@ -1904,7 +1905,7 @@ if menu == "Análisis Despachos":
 # MODULO PLANEACION PRODUCTO TERMINADO
 # ==================================================
 
-if menu == "Planeación vacio":
+if menu == "Planeación vacío":
 
     st.header("📈 PLANEACIÓN DE PRODUCTO TERMINADO")
 
@@ -2505,3 +2506,163 @@ if menu == "Gestión Movimientos":
                 conn.commit()
                 st.success("Producto eliminado")
                 st.rerun()
+
+# ==================================================
+# CONTROL TOTAL DEL LOTE
+# ==================================================
+
+if menu == "Control Lote":
+
+    st.header("🧠 Control Total del Lote")
+
+    lote_busqueda = st.text_input("Ingrese el Lote")
+
+    if lote_busqueda:
+
+        # ==========================================
+        # PRODUCCIÓN
+        # ==========================================
+
+        prod = pd.read_sql(f"""
+        SELECT *
+        FROM producciones
+        WHERE lote_produccion = '{lote_busqueda}'
+        """, conn)
+
+        if prod.empty:
+            st.warning("No existe ese lote en producción")
+            st.stop()
+
+        st.subheader("🏭 Información de Producción")
+
+        st.dataframe(prod, use_container_width=True)
+
+        id_prod = prod.iloc[0]["id"]
+
+        producto_base = prod.iloc[0]["producto_base"]
+
+        # ==========================================
+        # FORMULACIÓN
+        # ==========================================
+
+        st.subheader("🧪 Formulación del Producto")
+
+        formula = pd.read_sql(f"""
+        SELECT ingrediente, kilos
+        FROM formulaciones
+        WHERE producto_base = '{producto_base}'
+        """, conn)
+
+        if not formula.empty:
+            st.dataframe(formula)
+
+        # ==========================================
+        # INSUMOS UTILIZADOS
+        # ==========================================
+
+        st.subheader("📦 Lotes de Insumos Usados")
+
+        insumos = pd.read_sql(f"""
+        SELECT ingrediente, lote_insumo, kilos_usados
+        FROM consumo_insumos
+        WHERE id_produccion = {id_prod}
+        """, conn)
+
+        if not insumos.empty:
+            st.dataframe(insumos)
+
+        # ==========================================
+        # ETAPAS DE PRODUCCIÓN
+        # ==========================================
+
+        st.subheader("⚙ Etapas del Proceso")
+
+        etapas = pd.read_sql(f"""
+        SELECT etapa,
+               responsable,
+               hora_inicio,
+               hora_fin,
+               temp_inicial,
+               temp_proceso,
+               temp_final,
+               temp_choque,
+               peso_inicial,
+               peso_final,
+               merma_kg,
+               merma_porcentaje
+        FROM etapas_produccion
+        WHERE id_produccion = {id_prod}
+        """, conn)
+
+        if not etapas.empty:
+            st.dataframe(etapas, use_container_width=True)
+
+        # ==========================================
+        # DESPACHOS
+        # ==========================================
+
+        st.subheader("🚚 Despachos de Este Lote")
+
+        despachos = pd.read_sql(f"""
+        SELECT fecha,
+               destino,
+               cantidad,
+               factura
+        FROM salidas
+        WHERE lote = '{lote_busqueda}'
+        """, conn)
+
+        if not despachos.empty:
+            st.dataframe(despachos)
+
+        # ==========================================
+        # CLIENTES
+        # ==========================================
+
+        st.subheader("👥 Clientes que Recibieron el Lote")
+
+        clientes = pd.read_sql(f"""
+        SELECT DISTINCT destino
+        FROM salidas
+        WHERE lote = '{lote_busqueda}'
+        """, conn)
+
+        if not clientes.empty:
+            st.dataframe(clientes)
+
+        # ==========================================
+        # DESCARGA REPORTE
+        # ==========================================
+
+        st.divider()
+
+        st.subheader("📄 Reporte del Lote")
+
+        if st.button("Generar Reporte Completo"):
+
+            output = io.BytesIO()
+
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+                prod.to_excel(writer, sheet_name="Produccion", index=False)
+
+                if not formula.empty:
+                    formula.to_excel(writer, sheet_name="Formulacion", index=False)
+
+                if not insumos.empty:
+                    insumos.to_excel(writer, sheet_name="Insumos", index=False)
+
+                if not etapas.empty:
+                    etapas.to_excel(writer, sheet_name="Etapas", index=False)
+
+                if not despachos.empty:
+                    despachos.to_excel(writer, sheet_name="Despachos", index=False)
+
+                if not clientes.empty:
+                    clientes.to_excel(writer, sheet_name="Clientes", index=False)
+
+            st.download_button(
+                "Descargar Reporte del Lote",
+                data=output.getvalue(),
+                file_name=f"Reporte_Lote_{lote_busqueda}.xlsx"
+            )
