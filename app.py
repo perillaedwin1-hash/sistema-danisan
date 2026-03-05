@@ -37,10 +37,11 @@ h1, h2, h3 {
 
 </style>
 """, unsafe_allow_html=True)
-st.set_page_config(page_title="Sistema de Producción - DANISAN", layout="wide")
+
 st.title("Sistema de Producción - DANISAN")
 
 conn = sqlite3.connect("produccion.db", check_same_thread=False)
+conn.execute("PRAGMA journal_mode=WAL;")
 cursor = conn.cursor()
 
 # ==================================================
@@ -53,10 +54,58 @@ try:
 except:
     pass
 
+# ==================================================
+# TABLA MAESTRO REFERENCIAS
+# ==================================================
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS maestro_referencias (
+    referencia TEXT PRIMARY KEY,
+    producto_base TEXT,
+    peso_kg REAL
+)
+""")
+
+
+# ==================================================
+# TABLA FORMULACIONES
+# ==================================================
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS formulaciones (
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    producto_base TEXT,
+    ingrediente TEXT,
+    kilos REAL
+
+)
+""")
+
+conn.commit()
+
+# ==================================================
+# TABLA CONSUMO DE INSUMOS
+# ==================================================
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS consumo_insumos (
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_produccion INTEGER,
+    ingrediente TEXT,
+    lote_insumo TEXT,
+    kilos_usados REAL
+
+)
+""")
+
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS productos (
     codigo TEXT PRIMARY KEY,
-    producto TEXT UNIQUE
+    producto TEXT UNIQUE,
+    activo INTEGER DEFAULT 1
 )
 """)
 
@@ -270,6 +319,16 @@ productos_lista = [
 ("TOC-003","TOCINETA X 500 g JAMONERIA SUIZA")
 ]
 
+# ==========================================
+# ACTUALIZAR TABLA PRODUCTOS
+# ==========================================
+
+try:
+    cursor.execute("ALTER TABLE productos ADD COLUMN activo INTEGER DEFAULT 1")
+    conn.commit()
+except:
+    pass
+
 for codigo, producto in productos_lista:
     cursor.execute("""
     INSERT OR IGNORE INTO productos (codigo,producto,activo)
@@ -294,7 +353,10 @@ MODULOS_SISTEMA = [
     "Tablero Gerencial",
     "Administración Usuarios",
     "Gestión Movimientos",
-    "Control Lote"
+    "Control Lote",
+    "Trazabilidad Inversa",
+    "Consumo Insumos",
+    "Buscador Lote"
 ]
 
 # ==================================================
@@ -323,7 +385,7 @@ if st.session_state.usuario_activo is None:
         if user:
             st.session_state.usuario_activo = user[1]
             st.session_state.rol_activo = user[3]
-            st.session_state.modulos_activos = user[4].split("|")
+            st.session_state.modulos_activos = user[4].split("|") if user[4] else []
             st.success("Ingreso correcto")
             st.rerun()
         else:
@@ -688,6 +750,24 @@ if menu == "Producción":
             VALUES (?,?)
             """,(row["producto_base"],
                  row["kg_bache"]))
+            
+# ==========================================
+# GUARDAR FORMULACIONES
+# ==========================================
+
+        for _, row in recetas_df.iterrows():
+
+            cursor.execute("""
+            INSERT INTO formulaciones (producto_base,ingrediente,kilos)
+            VALUES (?,?,?)
+            """,(
+                row["producto_base"],
+                row["insumo"],
+                row["kg_base"]
+            ))
+
+
+
 
         conn.commit()
         st.success("Formulaciones cargadas correctamente")
@@ -869,6 +949,7 @@ if menu == "Producción":
 
             st.session_state.paso_prod = 1
             st.rerun()
+            
 
 # ==================================================
 # ORDEN DE PRODUCCIÓN PDF FINAL (SIN ERRORES)
@@ -2508,49 +2589,132 @@ if menu == "Gestión Movimientos":
                 st.rerun()
 
 # ==================================================
-# CONTROL TOTAL DEL LOTE
+# CARGA MAESTRO REFERENCIAS
+# ==================================================
+
+st.subheader("📦 Cargar Maestro de Referencias")
+
+archivo = st.file_uploader(
+    "Subir archivo MAESTRO_REFERENCIAS.xlsx",
+    type=["xlsx"]
+)
+
+if archivo is not None:
+
+    df = pd.read_excel(archivo)
+
+    df.columns = df.columns.str.strip().str.lower()
+
+    columnas = ["referencia","producto_base","peso_kg"]
+
+    if not all(col in df.columns for col in columnas):
+
+        st.error("El archivo debe contener columnas: referencia, producto_base, peso_kg")
+
+    else:
+
+        cursor.execute("DELETE FROM maestro_referencias")
+
+        for _, row in df.iterrows():
+
+            cursor.execute("""
+            INSERT INTO maestro_referencias
+            (referencia,producto_base,peso_kg)
+            VALUES (?,?,?)
+            """,(
+                row["referencia"],
+                row["producto_base"],
+                row["peso_kg"]
+            ))
+
+        conn.commit()
+
+        st.success("✅ Maestro de referencias cargado correctamente")
+
+        st.dataframe(df)
+
+# ==================================================
+# CONTROL TOTAL DEL LOTE INDUSTRIAL
 # ==================================================
 
 if menu == "Control Lote":
 
-    st.header("🧠 Control Total del Lote")
+    st.header("🧠 Control Total del Lote Industrial")
 
-    lote_busqueda = st.text_input("Ingrese el Lote")
+    # ==========================================
+    # PRODUCTOS BASE DISPONIBLES
+    # ==========================================
 
-    if lote_busqueda:
+    productos_base = pd.read_sql("""
+    SELECT DISTINCT producto_base
+    FROM producciones
+    ORDER BY producto_base
+    """, conn)
 
-        # ==========================================
+    if productos_base.empty:
+        st.warning("No hay producciones registradas.")
+        st.stop()
+
+    producto_base = st.selectbox(
+        "Seleccionar Producto Base",
+        productos_base["producto_base"]
+    )
+
+    # ==========================================
+    # LOTES DISPONIBLES
+    # ==========================================
+
+    lotes = pd.read_sql(f"""
+    SELECT lote_produccion
+    FROM producciones
+    WHERE producto_base='{producto_base}'
+    ORDER BY lote_produccion DESC
+    """, conn)
+
+    if lotes.empty:
+        st.warning("Este producto base no tiene lotes.")
+        st.stop()
+
+    lote_sel = st.selectbox(
+        "Seleccionar Lote de Producción",
+        lotes["lote_produccion"]
+    )
+
+    # ==========================================
+    # BOTON BUSCAR
+    # ==========================================
+
+    if st.button("Buscar Información del Lote"):
+
         # PRODUCCIÓN
-        # ==========================================
-
         prod = pd.read_sql(f"""
         SELECT *
         FROM producciones
-        WHERE lote_produccion = '{lote_busqueda}'
+        WHERE producto_base='{producto_base}'
+        AND lote_produccion='{lote_sel}'
         """, conn)
 
         if prod.empty:
-            st.warning("No existe ese lote en producción")
+            st.warning("No se encontró producción.")
             st.stop()
 
         st.subheader("🏭 Información de Producción")
-
-        st.dataframe(prod, use_container_width=True)
+        st.dataframe(prod)
 
         id_prod = prod.iloc[0]["id"]
 
-        producto_base = prod.iloc[0]["producto_base"]
+        kg_base = prod.iloc[0]["kg_producir"]
 
         # ==========================================
         # FORMULACIÓN
         # ==========================================
 
-        st.subheader("🧪 Formulación del Producto")
+        st.subheader("🧪 Formulación")
 
         formula = pd.read_sql(f"""
-        SELECT ingrediente, kilos
+        SELECT ingrediente,kilos
         FROM formulaciones
-        WHERE producto_base = '{producto_base}'
+        WHERE producto_base='{producto_base}'
         """, conn)
 
         if not formula.empty:
@@ -2560,85 +2724,137 @@ if menu == "Control Lote":
         # INSUMOS UTILIZADOS
         # ==========================================
 
-        st.subheader("📦 Lotes de Insumos Usados")
+        st.subheader("📦 Insumos Utilizados")
 
         insumos = pd.read_sql(f"""
-        SELECT ingrediente, lote_insumo, kilos_usados
-        FROM consumo_insumos
-        WHERE id_produccion = {id_prod}
+        SELECT insumo,lote_insumo,kg_usados
+        FROM consumo_materia_prima
+        WHERE id_produccion={id_prod}
         """, conn)
 
         if not insumos.empty:
             st.dataframe(insumos)
 
         # ==========================================
-        # ETAPAS DE PRODUCCIÓN
+        # ETAPAS
         # ==========================================
 
-        st.subheader("⚙ Etapas del Proceso")
+        st.subheader("⚙ Etapas de Proceso")
 
         etapas = pd.read_sql(f"""
-        SELECT etapa,
-               responsable,
-               hora_inicio,
-               hora_fin,
-               temp_inicial,
-               temp_proceso,
-               temp_final,
-               temp_choque,
-               peso_inicial,
-               peso_final,
-               merma_kg,
-               merma_porcentaje
+        SELECT etapa,temp_inicial,hora_inicio,temp_proceso,
+               temp_final,hora_final,temp_choque,
+               peso_inicial,peso_final,merma_kg,merma_pct,responsable
         FROM etapas_produccion
-        WHERE id_produccion = {id_prod}
+        WHERE id_produccion={id_prod}
         """, conn)
 
         if not etapas.empty:
-            st.dataframe(etapas, use_container_width=True)
+            st.dataframe(etapas)
 
         # ==========================================
-        # DESPACHOS
+        # PRODUCTOS FABRICADOS CON ESTE LOTE
         # ==========================================
 
-        st.subheader("🚚 Despachos de Este Lote")
+        st.subheader("📦 Productos Fabricados con este Lote")
+
+        productos = pd.read_sql(f"""
+        SELECT producto,
+               SUM(cantidad) as unidades
+        FROM entradas
+        WHERE lote_produccion = '{lote_sel}'
+        GROUP BY producto
+        """, conn)
+
+        if not productos.empty:
+
+           # CARGAR MAESTRO DE REFERENCIAS
+           maestro = pd.read_sql("""
+           SELECT referencia,peso_kg
+           FROM maestro_referencias
+           """, conn)
+
+           # CRUZAR PRODUCTOS CON PESOS
+           productos = productos.merge(
+               maestro,
+               left_on="producto",
+               right_on="referencia",
+               how="left"
+           )
+
+           productos["kg_fabricado"] = productos["unidades"] * productos["peso_kg"]
+
+           productos = productos[["producto","unidades","kg_fabricado"]]
+
+           st.dataframe(productos)
+
+           total_fabricado = productos["kg_fabricado"].sum()
+
+        else:
+
+           st.warning("No hay productos fabricados para este lote.")
+
+           total_fabricado = 0
+
+        # ==========================================
+        # DESPACHOS RELACIONADOS CON ESTE LOTE
+        # ==========================================
+
+        st.subheader("🚚 Despachos de Productos de este Lote")
 
         despachos = pd.read_sql(f"""
         SELECT fecha,
                destino,
+               producto,
+               lote,
                cantidad,
                factura
         FROM salidas
-        WHERE lote = '{lote_busqueda}'
+        WHERE producto IN (
+
+          SELECT producto
+          FROM entradas
+          WHERE lote_produccion = '{lote_sel}'
+
+        )
         """, conn)
 
         if not despachos.empty:
+
             st.dataframe(despachos)
 
-        # ==========================================
-        # CLIENTES
-        # ==========================================
+            total_despachado = despachos["cantidad"].sum()
 
-        st.subheader("👥 Clientes que Recibieron el Lote")
+            st.success(f"Total despachado: {total_despachado}")
 
-        clientes = pd.read_sql(f"""
-        SELECT DISTINCT destino
-        FROM salidas
-        WHERE lote = '{lote_busqueda}'
-        """, conn)
+        else:
 
-        if not clientes.empty:
-            st.dataframe(clientes)
+            st.info("No hay despachos asociados a este lote.")
 
         # ==========================================
-        # DESCARGA REPORTE
+        # RENDIMIENTO
+        # ==========================================
+
+        st.subheader("📊 Rendimiento del Lote")
+
+        merma = kg_base - total_fabricado
+
+        merma_pct = (merma / kg_base) * 100 if kg_base > 0 else 0
+
+        c1,c2,c3,c4 = st.columns(4)
+
+        c1.metric("Kg Producto Base", round(kg_base,2))
+        c2.metric("Kg Producto Fabricado", round(total_fabricado,2))
+        c3.metric("Merma Kg", round(merma,2))
+        c4.metric("Merma %", f"{merma_pct:.2f}%")
+
+        # ==========================================
+        # DESCARGAR REPORTE
         # ==========================================
 
         st.divider()
 
-        st.subheader("📄 Reporte del Lote")
-
-        if st.button("Generar Reporte Completo"):
+        if st.button("📄 Descargar Reporte Completo del Lote"):
 
             output = io.BytesIO()
 
@@ -2655,6 +2871,126 @@ if menu == "Control Lote":
                 if not etapas.empty:
                     etapas.to_excel(writer, sheet_name="Etapas", index=False)
 
+                if not productos.empty:
+                    productos.to_excel(writer, sheet_name="Productos", index=False)
+
+                if not despachos.empty:
+                    despachos.to_excel(writer, sheet_name="Despachos", index=False)
+
+            st.download_button(
+                "Descargar Excel",
+                data=output.getvalue(),
+                file_name=f"Reporte_Lote_{lote_sel}.xlsx"
+            )
+# ==================================================
+# TRAZABILIDAD INVERSA POR INSUMO
+# ==================================================
+
+if menu == "Trazabilidad Inversa":
+
+    st.header("🧬 Trazabilidad Inversa por Insumo")
+
+    lote_insumo = st.text_input("Ingrese el lote del insumo (carne, grasa, condimento, etc)")
+
+    if lote_insumo:
+
+        # ==========================================
+        # BUSCAR PRODUCCIONES DONDE SE USÓ
+        # ==========================================
+
+        prod_usadas = pd.read_sql(f"""
+        SELECT p.id,
+               p.producto_base,
+               p.lote_produccion,
+               p.fecha,
+               p.kg_producir,
+               c.insumo,
+               c.lote_insumo,
+               c.kg_usados
+        FROM consumo_materia_prima c
+        JOIN producciones p
+        ON p.id = c.id_produccion
+        WHERE c.lote_insumo = '{lote_insumo}'
+        """, conn)
+
+        if prod_usadas.empty:
+
+            st.warning("Este lote de insumo no ha sido usado en producción.")
+            st.stop()
+
+        st.subheader("🏭 Producciones donde se utilizó el insumo")
+
+        st.dataframe(prod_usadas)
+
+        # ==========================================
+        # LOTES PRODUCIDOS
+        # ==========================================
+
+        lotes = prod_usadas["lote_produccion"].unique().tolist()
+
+        st.subheader("🏷 Lotes de Producción Generados")
+
+        df_lotes = pd.DataFrame({"Lote Producción": lotes})
+
+        st.dataframe(df_lotes)
+
+        # ==========================================
+        # DESPACHOS DE ESOS LOTES
+        # ==========================================
+
+        lotes_str = "','".join(lotes)
+
+        despachos = pd.read_sql(f"""
+        SELECT producto,
+               lote,
+               fecha,
+               destino,
+               cantidad,
+               factura
+        FROM salidas
+        WHERE lote IN ('{lotes_str}')
+        """, conn)
+
+        if not despachos.empty:
+
+            st.subheader("🚚 Despachos de estos lotes")
+
+            st.dataframe(despachos)
+
+        else:
+
+            st.info("Estos lotes aún no han sido despachados.")
+
+        # ==========================================
+        # CLIENTES AFECTADOS
+        # ==========================================
+
+        clientes = pd.read_sql(f"""
+        SELECT DISTINCT destino
+        FROM salidas
+        WHERE lote IN ('{lotes_str}')
+        """, conn)
+
+        if not clientes.empty:
+
+            st.subheader("👥 Clientes que recibieron estos productos")
+
+            st.dataframe(clientes)
+
+        # ==========================================
+        # DESCARGAR REPORTE
+        # ==========================================
+
+        st.divider()
+
+        if st.button("📄 Descargar Reporte de Trazabilidad Inversa"):
+
+            output = io.BytesIO()
+
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+                prod_usadas.to_excel(writer, sheet_name="Producciones", index=False)
+
                 if not despachos.empty:
                     despachos.to_excel(writer, sheet_name="Despachos", index=False)
 
@@ -2662,7 +2998,240 @@ if menu == "Control Lote":
                     clientes.to_excel(writer, sheet_name="Clientes", index=False)
 
             st.download_button(
-                "Descargar Reporte del Lote",
+                "Descargar Excel",
                 data=output.getvalue(),
-                file_name=f"Reporte_Lote_{lote_busqueda}.xlsx"
+                file_name=f"Trazabilidad_Inversa_{lote_insumo}.xlsx"
             )
+# ==================================================
+# CONSUMO DE INSUMOS PARA COMPRAS
+# ==================================================
+
+if menu == "Consumo Insumos":
+
+    st.header("📦 Consumo de Insumos para Planeación de Compras")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        fecha_inicio = st.date_input("Desde")
+
+    with col2:
+        fecha_fin = st.date_input("Hasta")
+
+    if fecha_inicio and fecha_fin:
+
+        consumo = pd.read_sql(f"""
+        SELECT 
+            c.insumo,
+            SUM(c.kg_usados) as kg_total
+        FROM consumo_materia_prima c
+        JOIN producciones p
+        ON p.id = c.id_produccion
+        WHERE p.fecha BETWEEN '{fecha_inicio}' AND '{fecha_fin}'
+        GROUP BY c.insumo
+        ORDER BY kg_total DESC
+        """, conn)
+
+        if consumo.empty:
+
+            st.warning("No hay consumo registrado en ese período.")
+
+        else:
+
+            dias = (fecha_fin - fecha_inicio).days + 1
+
+            consumo["kg_dia"] = consumo["kg_total"] / dias
+
+            st.subheader("📊 Consumo Total por Insumo")
+
+            st.dataframe(consumo)
+
+            # =============================
+            # SUGERENCIA DE COMPRA
+            # =============================
+
+            st.divider()
+
+            st.subheader("🛒 Planeación de Compras")
+
+            dias_compra = st.number_input(
+                "Días de compra proyectados",
+                value=15
+            )
+
+            consumo["kg_sugerido_compra"] = consumo["kg_dia"] * dias_compra
+
+            st.dataframe(
+                consumo[
+                    [
+                        "insumo",
+                        "kg_total",
+                        "kg_dia",
+                        "kg_sugerido_compra"
+                    ]
+                ]
+            )
+
+            # =============================
+            # DESCARGAR REPORTE
+            # =============================
+
+            output = io.BytesIO()
+
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+                consumo.to_excel(writer, sheet_name="Consumo_Insumos", index=False)
+
+            st.download_button(
+                "📥 Descargar Reporte de Compras",
+                data=output.getvalue(),
+                file_name="Planeacion_Compras_Insumos.xlsx"
+            )    
+
+# ==================================================
+# BUSCADOR UNIVERSAL DE LOTE
+# ==================================================
+
+if menu == "Buscador Lote":
+
+    st.header("🔎 Buscador Universal de Lote")
+
+    lote_buscar = st.text_input("Escribir lote a buscar")
+
+    if st.button("Buscar Lote"):
+
+        # ==========================
+        # PRODUCCIÓN
+        # ==========================
+
+        produccion = pd.read_sql(f"""
+        SELECT *
+        FROM producciones
+        WHERE lote_produccion LIKE '%{lote_buscar}%'
+        """, conn)
+
+        if not produccion.empty:
+
+            st.subheader("🏭 Producción")
+
+            st.dataframe(produccion)
+
+            producto_base = produccion.iloc[0]["producto_base"]
+            id_prod = produccion.iloc[0]["id"]
+
+        else:
+
+            st.warning("No se encontró producción para ese lote")
+            st.stop()
+
+        # ==========================
+        # FORMULACIÓN
+        # ==========================
+
+        formula = pd.read_sql(f"""
+        SELECT ingrediente,kilos
+        FROM formulaciones
+        WHERE producto_base='{producto_base}'
+        """, conn)
+
+        st.subheader("🧪 Formulación")
+
+        if not formula.empty:
+            st.dataframe(formula)
+
+        # ==========================
+        # INSUMOS
+        # ==========================
+
+        insumos = pd.read_sql(f"""
+        SELECT insumo,lote_insumo,kg_usados
+        FROM consumo_materia_prima
+        WHERE id_produccion={id_prod}
+        """, conn)
+
+        st.subheader("📦 Insumos Utilizados")
+
+        if not insumos.empty:
+            st.dataframe(insumos)
+
+        # ==========================
+        # ETAPAS
+        # ==========================
+
+        etapas = pd.read_sql(f"""
+        SELECT *
+        FROM etapas_produccion
+        WHERE id_produccion={id_prod}
+        """, conn)
+
+        st.subheader("⚙ Etapas de Producción")
+
+        if not etapas.empty:
+            st.dataframe(etapas)
+
+        # ==========================
+        # PRODUCTOS FABRICADOS
+        # ==========================
+
+        productos = pd.read_sql(f"""
+        SELECT producto,
+               SUM(cantidad) as unidades
+        FROM entradas
+        WHERE lote_produccion='{lote_buscar}'
+        GROUP BY producto
+        """, conn)
+
+        st.subheader("📦 Productos Fabricados")
+
+        if not productos.empty:
+
+            maestro = pd.read_sql("""
+            SELECT referencia,peso_kg
+            FROM maestro_referencias
+            """, conn)
+
+            productos = productos.merge(
+                maestro,
+                left_on="producto",
+                right_on="referencia",
+                how="left"
+            )
+
+            productos["kg"] = productos["unidades"] * productos["peso_kg"]
+
+            st.dataframe(productos)
+
+        # ==========================
+        # DESPACHOS
+        # ==========================
+
+        despachos = pd.read_sql(f"""
+        SELECT fecha,
+               destino,
+               producto,
+               cantidad,
+               factura
+        FROM salidas
+        WHERE producto IN (
+            SELECT producto
+            FROM entradas
+            WHERE lote_produccion='{lote_buscar}'
+        )
+        """, conn)
+
+        st.subheader("🚚 Despachos")
+
+        if not despachos.empty:
+
+            st.dataframe(despachos)
+
+            clientes = despachos["destino"].unique()
+
+            st.subheader("👥 Clientes")
+
+            st.write(clientes)
+
+        else:
+
+            st.info("No hay despachos registrados")
+
