@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
 
 conn.commit()
 
+
 # ==================================================
 # LISTA COMPLETA DE PRODUCTOS
 # ==================================================
@@ -359,14 +360,16 @@ MODULOS_SISTEMA = [
     "Buscador Lote"
 ]
 
+
 # ==================================================
-# LOGIN
+# LOGIN SISTEMA
 # ==================================================
 
 if "usuario_activo" not in st.session_state:
     st.session_state.usuario_activo = None
     st.session_state.rol_activo = None
     st.session_state.modulos_activos = []
+    st.session_state.modulo = None
 
 if st.session_state.usuario_activo is None:
 
@@ -377,56 +380,217 @@ if st.session_state.usuario_activo is None:
 
     if st.button("Ingresar"):
 
-        user = cursor.execute(
-            "SELECT * FROM usuarios WHERE usuario=? AND contraseña=?",
-            (usuario, contraseña)
-        ).fetchone()
+        user = cursor.execute("""
+        SELECT usuario, contraseña, rol, modulos
+        FROM usuarios
+        WHERE usuario=? AND contraseña=?
+        """,(usuario, contraseña)).fetchone()
 
         if user:
-            st.session_state.usuario_activo = user[1]
-            st.session_state.rol_activo = user[3]
-            st.session_state.modulos_activos = user[4].split("|") if user[4] else []
+
+            st.session_state.usuario_activo = user[0]
+            st.session_state.rol_activo = user[2]
+
+            if user[3]:
+                st.session_state.modulos_activos = user[3].split("|")
+            else:
+                st.session_state.modulos_activos = []
+
             st.success("Ingreso correcto")
             st.rerun()
+
         else:
             st.error("Usuario o contraseña incorrectos")
 
     st.stop()
 
+# ==================================================
+# MENU PRINCIPAL TIPO ERP (TARJETAS)
+# ==================================================
+
+st.title("🏭 Sistema DANISAN")
+
+st.write(f"👤 Usuario: {st.session_state.usuario_activo}")
+st.write(f"🔐 Rol: {st.session_state.rol_activo}")
+
+st.divider()
+
+modulos = st.session_state.modulos_activos
+
+if not modulos:
+    st.warning("Este usuario no tiene módulos asignados")
+    st.stop()
+
+# ==================================================
+# COLORES POR MODULO
+# ==================================================
+
+colores_modulos = {
+
+"Entrada":"#1ABC9C",
+"Salida":"#3498DB",
+"Dashboard":"#9B59B6",
+"Trazabilidad":"#34495E",
+"Producción":"#E67E22",
+"Planeación Producción":"#F39C12",
+"Planeación vacío":"#D35400",
+"Orden Producción PDF":"#2ECC71",
+"Ordenes por Fecha":"#27AE60",
+"Reporte Producción":"#16A085",
+"Devoluciones":"#C0392B",
+"Análisis Despachos":"#2980B9",
+"Tablero Gerencial":"#8E44AD",
+"Administración Usuarios":"#7F8C8D",
+"Gestión Movimientos":"#2C3E50",
+"Control Lote":"#E74C3C",
+"Trazabilidad Inversa":"#95A5A6",
+"Consumo Insumos":"#1F618D",
+"Buscador Lote":"#5D6D7E"
+
+}
+
+# ==================================================
+# GRID DE TARJETAS
+# ==================================================
+
+cols = st.columns(4)
+
+for i, modulo in enumerate(modulos):
+
+    color = colores_modulos.get(modulo, "#34495E")
+
+    tarjeta = f"""
+    <div style="
+    background-color:{color};
+    padding:30px;
+    border-radius:15px;
+    text-align:center;
+    font-size:20px;
+    font-weight:bold;
+    color:white;
+    ">
+    {modulo}
+    </div>
+    """
+
+    with cols[i % 4]:
+
+        st.markdown(tarjeta, unsafe_allow_html=True)
+
+        if st.button(f"Abrir {modulo}", use_container_width=True):
+
+            st.session_state.modulo = modulo
+            st.rerun()
+
+
+ 
  # ==================================================
 # HEADER USUARIO ACTIVO
 # ==================================================
 
 if st.session_state.usuario_activo:
 
-    col1, col2 = st.columns([6,1])
+    col1, col2 = st.columns([8,2])
 
     with col1:
-        st.write(f"👤 Usuario: {st.session_state.usuario_activo} | Rol: {st.session_state.rol_activo}")
+        st.write(f"👤 Usuario: {st.session_state.usuario_activo}")
 
     with col2:
         if st.button("Cerrar sesión"):
-            st.session_state.usuario_activo = None
-            st.session_state.rol_activo = None
-            st.session_state.modulos_activos = []
-            st.rerun()
+           for key in list(st.session_state.keys()):
+               del st.session_state[key]
+            
+           st.rerun()
+
+            
 
 # ==================================================
-# MENÚ SEGÚN PERMISOS
+# CARGA DE MODULOS
 # ==================================================
 
-st.sidebar.title("Menú")
+if st.session_state.modulo == "Entrada":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
 
-menu = st.sidebar.selectbox(
-    "Seleccione módulo",
-    st.session_state.modulos_activos
-)
+elif st.session_state.modulo == "Salida":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Dashboard":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Trazabilidad":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Producción":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Planeación Producción":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Planeación vacío":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Orden Producción PDF":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Ordenes por Fecha":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"        
+
+elif st.session_state.modulo == "Reporte Producción":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+elif st.session_state.modulo == "Devoluciones":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"   
+
+elif st.session_state.modulo == "Análisis Despachos":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"    
+
+elif st.session_state.modulo == "Tablero Gerencial":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"     
+
+elif st.session_state.modulo == "Administración Usuarios":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio" 
+
+elif st.session_state.modulo == "Gestión Movimientos":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"         
+
+elif st.session_state.modulo == "Control Lote":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio" 
+
+elif st.session_state.modulo == "Trazabilidad Inversa":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio" 
+
+elif st.session_state.modulo == "Consumo Insumos":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio" 
+
+elif st.session_state.modulo == "Control Lote":
+    if st.button("⬅ Volver"):
+        st.session_state.modulo = "Inicio"
+
+    # CODIGO CONTROL LOTE
 
 # ==================================================
 # ENTRADA
 # ==================================================
 
-if menu == "Entrada":
+if st.session_state.modulo == "Entrada":
 
     st.header("Registro de Entrada")
 
@@ -459,7 +623,7 @@ if menu == "Entrada":
 # SALIDA FACTURA MULTIPRODUCTO
 # ==================================================
 
-if menu == "Salida":
+if st.session_state.modulo == "Salida":
 
     st.header("Registro de Salida - Factura")
 
@@ -539,7 +703,7 @@ if menu == "Salida":
 # DASHBOARD MEJORADO
 # ==================================================
 
-if menu == "Dashboard":
+if st.session_state.modulo == "Dashboard":
 
     st.header("Dashboard Inventario")
 
@@ -609,7 +773,7 @@ if menu == "Dashboard":
 # TRAZABILIDAD
 # ==================================================
 
-if menu == "Trazabilidad":
+if st.session_state.modulo == "Trazabilidad":
 
     st.header("Trazabilidad")
 
@@ -648,7 +812,7 @@ if menu == "Trazabilidad":
 # MODULO PRODUCCION INDUSTRIAL (SEPARADO INVENTARIO)
 # ==================================================
 
-if menu == "Producción":
+if st.session_state.modulo == "Producción":
 
     st.header("Producción Industrial")
 
@@ -955,7 +1119,7 @@ if menu == "Producción":
 # ORDEN DE PRODUCCIÓN PDF FINAL (SIN ERRORES)
 # ==================================================
 
-if menu == "Orden Producción PDF":
+if st.session_state.modulo == "Orden Producción PDF":
 
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib import colors
@@ -1199,7 +1363,7 @@ if menu == "Orden Producción PDF":
 # ÓRDENES DE PRODUCCIÓN POR FECHA (PDF CONSOLIDADO)
 # ==================================================
 
-if menu == "Ordenes por Fecha":
+if st.session_state.modulo == "Ordenes por Fecha":
 
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
     from reportlab.lib import colors
@@ -1366,7 +1530,7 @@ if menu == "Ordenes por Fecha":
 # REPORTE AVANZADO DE PRODUCCIÓN
 # ==================================================
 
-if menu == "Reporte Producción":
+if st.session_state.modulo == "Reporte Producción":
 
     st.header("Reporte Avanzado de Producción")
 
@@ -1511,7 +1675,7 @@ if menu == "Reporte Producción":
 # TABLERO GERENCIAL AVANZADO
 # ==================================================
 
-if menu == "Tablero Gerencial":
+if st.session_state.modulo == "Tablero Gerencial":
 
     import plotly.express as px
     import plotly.graph_objects as go
@@ -1661,7 +1825,8 @@ if menu == "Tablero Gerencial":
 # DEVOLUCIONES – LOGÍSTICA INVERSA INDUSTRIAL
 # ==================================================
 
-if menu == "Devoluciones":
+if st.session_state.modulo == "Devoluciones":
+ 
 
     st.header("📦 DEVOLUCIONES / LOGÍSTICA INVERSA")
     st.divider()
@@ -1822,7 +1987,7 @@ if menu == "Devoluciones":
 # DEVOLUCIONES
 # ==================================================
 
-if menu == "Devoluciones":
+if st.session_state.modulo == "Devoluciones":
 
     st.header("📦 DEVOLUCIONES")
     st.divider()
@@ -1869,7 +2034,7 @@ if menu == "Devoluciones":
 # MODULO ANALISIS DE DESPACHOS
 # ==================================================
 
-if menu == "Análisis Despachos":
+if st.session_state.modulo == "Análisis Despachos":
 
     st.header("📊 ANALISIS DE PRODUCTO TERMINADO DESPACHADO")
 
@@ -1986,7 +2151,7 @@ if menu == "Análisis Despachos":
 # MODULO PLANEACION PRODUCTO TERMINADO
 # ==================================================
 
-if menu == "Planeación vacío":
+if st.session_state.modulo ==  "Planeación vacío":
 
     st.header("📈 PLANEACIÓN DE PRODUCTO TERMINADO")
 
@@ -2126,7 +2291,7 @@ if menu == "Planeación vacío":
 # 🧠 PLANEACIÓN PRODUCCIÓN INTELIGENTE (MRP)
 # ==================================================
 
-if menu == "Planeación Producción":
+if st.session_state.modulo == "Planeación Producción":
 
     st.header("🧠 Planeación Producción Inteligente")
 
@@ -2313,7 +2478,7 @@ conn.commit()
 # 👑 ADMINISTRACIÓN DE USUARIOS
 # ==================================================
 
-if menu == "Administración Usuarios":
+if st.session_state.modulo == "Administración Usuarios":
 
     st.header("👑 Administración de Usuarios")
 
@@ -2402,7 +2567,7 @@ if menu == "Administración Usuarios":
 # 🛠 GESTIÓN DE MOVIMIENTOS
 # ==================================================
 
-if menu == "Gestión Movimientos":
+if st.session_state.modulo == "Gestión Movimientos":
 
     st.header("🛠 Gestión de Movimientos")
 
@@ -2588,56 +2753,56 @@ if menu == "Gestión Movimientos":
                 st.success("Producto eliminado")
                 st.rerun()
 
-# ==================================================
-# CARGA MAESTRO REFERENCIAS
-# ==================================================
+    # ==================================================
+    # CARGA MAESTRO REFERENCIAS
+    # ==================================================
 
-st.subheader("📦 Cargar Maestro de Referencias")
+    st.subheader("📦 Cargar Maestro de Referencias")
 
-archivo = st.file_uploader(
-    "Subir archivo MAESTRO_REFERENCIAS.xlsx",
-    type=["xlsx"]
-)
+    archivo = st.file_uploader(
+        "Subir archivo MAESTRO_REFERENCIAS.xlsx",
+        type=["xlsx"]
+    )
 
-if archivo is not None:
+    if archivo is not None:
 
-    df = pd.read_excel(archivo)
+        df = pd.read_excel(archivo)
 
-    df.columns = df.columns.str.strip().str.lower()
+        df.columns = df.columns.str.strip().str.lower()
 
-    columnas = ["referencia","producto_base","peso_kg"]
+        columnas = ["referencia","producto_base","peso_kg"]
 
-    if not all(col in df.columns for col in columnas):
+        if not all(col in df.columns for col in columnas):
 
-        st.error("El archivo debe contener columnas: referencia, producto_base, peso_kg")
+            st.error("El archivo debe contener columnas: referencia, producto_base, peso_kg")
 
-    else:
+        else:
 
-        cursor.execute("DELETE FROM maestro_referencias")
+            cursor.execute("DELETE FROM maestro_referencias")
 
-        for _, row in df.iterrows():
+            for _, row in df.iterrows():
 
-            cursor.execute("""
-            INSERT INTO maestro_referencias
-            (referencia,producto_base,peso_kg)
-            VALUES (?,?,?)
-            """,(
-                row["referencia"],
-                row["producto_base"],
-                row["peso_kg"]
-            ))
+                cursor.execute("""
+                INSERT INTO maestro_referencias
+                (referencia,producto_base,peso_kg)
+                VALUES (?,?,?)
+                """,(
+                    row["referencia"],
+                    row["producto_base"],
+                    row["peso_kg"]
+                ))
 
-        conn.commit()
+            conn.commit()
 
-        st.success("✅ Maestro de referencias cargado correctamente")
+            st.success("✅ Maestro de referencias cargado correctamente")
 
-        st.dataframe(df)
+            st.dataframe(df)
 
 # ==================================================
 # CONTROL TOTAL DEL LOTE INDUSTRIAL
 # ==================================================
 
-if menu == "Control Lote":
+if st.session_state.modulo == "Control Lote":
 
     st.header("🧠 Control Total del Lote Industrial")
 
@@ -2832,7 +2997,28 @@ if menu == "Control Lote":
             st.info("No hay despachos asociados a este lote.")
 
         # ==========================================
-        # RENDIMIENTO
+        # PESO FINAL DEL PROCESO (ÚLTIMA ETAPA)
+        # ==========================================
+
+        peso_final_proceso = pd.read_sql(f"""
+        SELECT peso_final
+        FROM etapas_produccion
+        WHERE id_produccion = {id_prod}
+        ORDER BY id DESC
+        LIMIT 1
+        """, conn)
+
+        if not peso_final_proceso.empty:
+
+            kg_base = peso_final_proceso["peso_final"].iloc[0]
+
+        else:
+
+            st.warning("No se encontraron etapas de proceso.")
+            kg_base = 0
+
+        # ==========================================
+        # RENDIMIENTO DEL LOTE
         # ==========================================
 
         st.subheader("📊 Rendimiento del Lote")
@@ -2841,13 +3027,15 @@ if menu == "Control Lote":
 
         merma_pct = (merma / kg_base) * 100 if kg_base > 0 else 0
 
-        c1,c2,c3,c4 = st.columns(4)
+        col1, col2, col3, col4 = st.columns(4)
 
-        c1.metric("Kg Producto Base", round(kg_base,2))
-        c2.metric("Kg Producto Fabricado", round(total_fabricado,2))
-        c3.metric("Merma Kg", round(merma,2))
-        c4.metric("Merma %", f"{merma_pct:.2f}%")
+        col1.metric("Kg Después de Cocción", round(kg_base,2))
 
+        col2.metric("Kg Producto Fabricado", round(total_fabricado,2))
+
+        col3.metric("Merma Kg", round(merma,2))
+
+        col4.metric("Merma %", f"{merma_pct:.2f}%")
         # ==========================================
         # DESCARGAR REPORTE
         # ==========================================
@@ -2886,7 +3074,7 @@ if menu == "Control Lote":
 # TRAZABILIDAD INVERSA POR INSUMO
 # ==================================================
 
-if menu == "Trazabilidad Inversa":
+if st.session_state.modulo == "Trazabilidad Inversa":
 
     st.header("🧬 Trazabilidad Inversa por Insumo")
 
@@ -3006,7 +3194,7 @@ if menu == "Trazabilidad Inversa":
 # CONSUMO DE INSUMOS PARA COMPRAS
 # ==================================================
 
-if menu == "Consumo Insumos":
+if st.session_state.modulo == "Consumo Insumos":
 
     st.header("📦 Consumo de Insumos para Planeación de Compras")
 
@@ -3092,7 +3280,7 @@ if menu == "Consumo Insumos":
 # BUSCADOR UNIVERSAL DE LOTE
 # ==================================================
 
-if menu == "Buscador Lote":
+if st.session_state.modulo == "Buscador Lote":
 
     st.header("🔎 Buscador Universal de Lote")
 
